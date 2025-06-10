@@ -3,32 +3,22 @@ use crate::{
     models::{PartialUser, User},
     redis,
 };
-use actix_web::{HttpResponse, Responder, delete, get, post, web};
+
+use crate::utils::{success_response, error_response};
+
+use actix_web::{Responder, delete, get, post, web};
 use quick_xml::de::from_str;
 use scylla::Session;
 use serde_json::json;
 use uuid::Uuid;
 use regex::Regex;
 
-// #[get("/users")]
-// pub async fn get_users(session: web::Data<Session>) -> impl Responder {
-//     if let Some(cached_users) = redis::get_cached_users().await {
-//         return HttpResponse::Ok().json(json!({ "message": "all users from cache", "success": true, "data": cached_users }));
-//     }
-
-//     let users = db::get_all_users(&session).await;
-
-//     redis::cache_users(&users).await;
-//     HttpResponse::Ok().json(json!({ "message":"all users", "success":true, "data":users }))
-// }
-
 #[get("/users")]
 pub async fn get_users(session: web::Data<Session>) -> impl Responder {
     // Check if the list of users is cached
     if let Some(cached_users) = redis::get_cached_users().await {
         if !cached_users.is_empty() {
-            return HttpResponse::Ok().json(json!({ "message": "all users from cache", "success": true, "data": cached_users }));
-        }
+            return success_response("All users from cache", Some(cached_users));        }
     }
 
     // If not cached or cache is empty, query the database
@@ -37,8 +27,7 @@ pub async fn get_users(session: web::Data<Session>) -> impl Responder {
     // Cache the result in Redis
     redis::cache_users(&users).await;
 
-    HttpResponse::Ok().json(json!({ "message": "all users", "success": true, "data": users }))
-}
+    success_response("All users", Some(users))}
 
 #[get("/get_user/{id}")]
 pub async fn get_user(
@@ -49,7 +38,7 @@ pub async fn get_user(
 
     // Check if the user is cached in Redis
     if let Some(cached_user) = redis::get_cached_user(&user_id).await {
-        return HttpResponse::Ok().json(json!({ "message": "user from cache", "success": true, "data": cached_user })); // Return the cached user
+        return success_response("User from cache", Some(cached_user));    
     }
 
     // If not cached, query the database
@@ -57,10 +46,10 @@ pub async fn get_user(
         Ok(Some(user)) => {
             // Cache the user in Redis for future requests
             redis::cache_user(&user).await;
-            HttpResponse::Ok().json(user)
+            success_response("User fetched successfully", Some(user))
         }
-        Ok(None) => HttpResponse::NotFound().body(format!("No user found with ID {}", user_id)),
-        Err(err) => HttpResponse::InternalServerError().body(format!("Database error: {}", err)),
+        Ok(None) => error_response(&format!("No user found with ID {}", user_id), 404),
+        Err(err) => error_response(&format!("Database error: {}", err), 500),
     }
 }
 
@@ -68,20 +57,20 @@ pub async fn get_user(
 pub async fn add_user(session: web::Data<Session>, body: String) -> impl Responder {
     let mut user: User = match from_str(&body) {
         Ok(user) => user,
-        Err(err) => return HttpResponse::BadRequest().body(format!("Invalid input: {}", err)),
+        Err(err) => return error_response(&format!("Invalid input: {}", err), 400),
     };
 
     match db::get_user_by_email(&session, &user.email).await {
         Ok(Some(_)) => {
             // Email already exists
-            return HttpResponse::BadRequest().body(format!("Email {} is already in use", user.email));
+            return error_response(&format!("Email {} is already in use", user.email), 400);
         }
         Ok(None) => {
             // Email does not exist, proceed with adding the user
         }
         Err(err) => {
             // Database error
-            return HttpResponse::InternalServerError().body(format!("Database error: {}", err));
+            return error_response(&format!("Database error: {}", err), 500);
         }
     }
 
@@ -93,7 +82,7 @@ pub async fn add_user(session: web::Data<Session>, body: String) -> impl Respond
 
     redis::cache_users(&users).await;
 
-    HttpResponse::Ok().body("User added")
+    success_response("User added successfully", Some(user))
 }
 
 #[delete("/delete_user/{id}")]
@@ -101,17 +90,9 @@ pub async fn delete_user(session: web::Data<Session>, id: web::Path<Uuid>) -> im
     let user_id = id.into_inner();
 
     match db::get_user_by_id(&session, user_id).await {
-        Ok(Some(_)) => {
-            // User exists, proceed with deletion
-        }
-        Ok(None) => {
-            // User does not exist
-            return HttpResponse::NotFound().body(format!("No user found with ID {}", user_id));
-        }
-        Err(err) => {
-            // Database error
-            return HttpResponse::InternalServerError().body(format!("Database error: {}", err));
-        }
+        Ok(Some(_)) => {}
+        Ok(None) => return error_response(&format!("No user found with ID {}", user_id), 404),
+        Err(err) => return error_response(&format!("Database error: {}", err), 500),
     }
 
     match db::delete_user(&session, user_id).await {
@@ -120,10 +101,14 @@ pub async fn delete_user(session: web::Data<Session>, id: web::Path<Uuid>) -> im
 
             let users = db::get_all_users(&session).await;
             redis::cache_users(&users).await;
-            HttpResponse::Ok().body(format!("User with ID {} deleted", user_id)) 
+
+            success_response(&format!("User with ID {} deleted", user_id),  Some(json!({
+                "id": user_id,
+                "status": "deleted"
+            })))
         },
         Err(err) => {
-            HttpResponse::InternalServerError().body(format!("Failed to delete user: {}", err))
+            error_response(&format!("Failed to delete user: {}", err), 500)
         }
     }
 }
@@ -142,29 +127,29 @@ pub async fn update_user(
         }
         Ok(None) => {
             // User does not exist
-            return HttpResponse::NotFound().body(format!("No user found with ID {}", user_id));
+            return error_response(&format!("No user found with ID {}", user_id), 404);
         }
         Err(err) => {
             // Database error
-            return HttpResponse::InternalServerError().body(format!("Database error: {}", err));
+            return error_response(&format!("Database error: {}", err), 500);
         }
     }
 
     let partial_user: PartialUser = match from_str(&body) {
         Ok(user) => user,
-        Err(err) => return HttpResponse::BadRequest().body(format!("Invalid input: {}", err)),
+        Err(err) => return error_response(&format!("Invalid input: {}", err), 400),
     };
 
     if let Some(name) = &partial_user.name {
         if name.trim().is_empty() {
-            return HttpResponse::BadRequest().body("Name cannot be blank");
+            return error_response("Name cannot be blank", 400);
         }
     }
 
     if let Some(email) = &partial_user.email {
         let email_regex = Regex::new(r"^[^\s@]+@[^\s@]+\.[^\s@]+$").unwrap();
         if !email_regex.is_match(email) {
-            return HttpResponse::BadRequest().body("Invalid email format");
+            return error_response("Invalid email format", 400);
         }
     }
 
@@ -175,11 +160,16 @@ pub async fn update_user(
 
                 let users = db::get_all_users(&session).await;
                 redis::cache_users(&users).await;
+
+                return success_response("User updated successfully", Some(updated_user));
             }
-            HttpResponse::Ok().body(format!("User with ID {} updated", user_id))  
+            success_response("User updated successfully, but failed to fetch updated data", Some(json!({
+                "id": user_id,
+                "status": "updated"
+            })))
         },
         Err(err) => {
-            HttpResponse::InternalServerError().body(format!("Failed to update user: {}", err))
+            error_response(&format!("Failed to update user: {}", err), 500)
         }
     }
 }

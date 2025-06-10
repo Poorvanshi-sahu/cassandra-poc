@@ -1,4 +1,6 @@
 use actix_web::HttpResponse;
+use serde::Serialize;
+use crate::models::ApiResponse;
 
 pub fn success_response<T: Serialize>(message: &str, data: Option<T>) -> HttpResponse {
     HttpResponse::Ok().json(ApiResponse {

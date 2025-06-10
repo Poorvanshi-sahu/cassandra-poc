@@ -26,15 +26,6 @@ pub async fn remove_cached_user(id: &str) {
     let _: () = con.del(id).await.unwrap();
 }
 
-// pub async fn cache_users(users: &[User]) {
-//     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//     let mut con = client.get_async_connection().await.unwrap();
-//     let _: () = con
-//         .set("all_users", serde_json::to_string(users).unwrap())
-//         .await
-//         .unwrap();
-// }
-
 pub async fn cache_users(users: &[User]) {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
     let mut con = client.get_async_connection().await.unwrap();
@@ -43,13 +34,6 @@ pub async fn cache_users(users: &[User]) {
         .await
         .unwrap();
 }
-
-// pub async fn get_cached_users() -> Option<Vec<User>> {
-//     let client = redis::Client::open("redis://127.0.0.1/").unwrap();
-//     let mut con = client.get_async_connection().await.unwrap();
-//     let val: Option<String> = con.get("all_users").await.unwrap();
-//     val.map(|v| serde_json::from_str(&v).unwrap())
-// }
 
 pub async fn get_cached_users() -> Option<Vec<User>> {
     let client = redis::Client::open("redis://127.0.0.1/").unwrap();

@@ -2,6 +2,7 @@ mod db;
 mod handlers;
 mod models;
 mod redis;
+mod utils;
 
 use actix_web::{App, HttpServer, web};
 use db::{connect_db, init_db};
